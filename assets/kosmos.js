@@ -8,6 +8,7 @@ window.today = "";
 window.maxAppointmentDate = "";
 window.customers = [];
 window.appointmentOTP = "";
+window.recaptchaToken = "";
 window.dayHours = [];
 window.closedDates = [];
 window.hours = [{ "id": 11, "code": "A", "name": "08.15" }, { "id": 12, "code": "A", "name": "08.30" }, { "id": 13, "code": "A", "name": "08.45" }, { "id": 14, "code": "B", "name": "09.00" }, { "id": 15, "code": "B", "name": "09.15" }, { "id": 101, "code": "B", "name": "09.30" }, { "id": 102, "code": "B", "name": "09.45" }, { "id": 103, "code": "C", "name": "10.00" }, { "id": 104, "code": "C", "name": "10.15" }, { "id": 105, "code": "C", "name": "10.30" }, { "id": 106, "code": "D", "name": "11.00" }, { "id": 107, "code": "D", "name": "11.15" }, { "id": 108, "code": "D", "name": "11.30" }, { "id": 146, "code": "A", "name": "08.00" }, { "id": 255, "code": "C", "name": "10.45" }, { "id": 281, "code": "D", "name": "11.45" }, { "id": 282, "code": "E", "name": "12.00" }, { "id": 283, "code": "E", "name": "12.15" }, { "id": 284, "code": "E", "name": "12.30" }, { "id": 285, "code": "E", "name": "12.45" }, { "id": 286, "code": "F", "name": "13.00" }, { "id": 287, "code": "F", "name": "13.15" }, { "id": 288, "code": "F", "name": "13.30" }, { "id": 289, "code": "F", "name": "13.45" }, { "id": 290, "code": "G", "name": "14.00" }, { "id": 291, "code": "G", "name": "14.15" }, { "id": 292, "code": "G", "name": "14.30" }, { "id": 293, "code": "G", "name": "14.45" }, { "id": 294, "code": "H", "name": "15.00" }, { "id": 295, "code": "H", "name": "15.15" }, { "id": 296, "code": "H", "name": "15.30" }, { "id": 297, "code": "H", "name": "15.45" }, { "id": 298, "code": "I", "name": "16.00" }, { "id": 299, "code": "I", "name": "16.15" }, { "id": 300, "code": "I", "name": "16.30" }, { "id": 301, "code": "I", "name": "16.45" }, { "id": 302, "code": "J", "name": "17.00" }, { "id": 303, "code": "J", "name": "17.15" }, { "id": 304, "code": "J", "name": "17.30" }, { "id": 305, "code": "J", "name": "17.45" }, { "id": 2043, "code": "Z", "name": "07.00" }, { "id": 2044, "code": "Z", "name": "07.15" }, { "id": 2045, "code": "Z", "name": "07.30" }, { "id": 2046, "code": "Z", "name": "07.45" }];
@@ -33,6 +34,58 @@ window.endPoints = {
     // "PostAppointment": "AppointmentCustomers/Appointment?lang=tr&smsCode=xxxx&paymentCustomerId=xxxx",
     // "PaymentIframeUrl": "https://api.kosmosvize.com.tr/sipay?customerBarcodes=xxxxx&paymentCustomerBarcode=xxxx",
 };
+
+window.solveRecaptcha = async (clientKey) => {
+    const createRes = await fetch("https://api.capmonster.cloud/createTask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+            clientKey,
+            task: {
+                type: "NoCaptchaTaskProxyless",
+                websiteURL: `${window.referrer}appointmentform`,
+                websiteKey: `${window.recaptchaSiteKey}`,
+            },
+        }),
+    });
+
+    const createJson = await createRes.json();
+
+    if (createJson.errorId !== 0) {
+        throw new Error(`Task creation failed: ${createJson.errorDescription || createJson.errorCode}`);
+    }
+
+    const taskId = createJson.taskId;
+
+    const startTime = Date.now();
+    while (Date.now() - startTime < 30000) {
+        await new Promise((r) => setTimeout(r, 500));
+
+        const resultRes = await fetch("https://api.capmonster.cloud/getTaskResult", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                clientKey,
+                taskId,
+            }),
+        });
+
+        const resultJson = await resultRes.json();
+
+        if (resultJson.errorId !== 0) {
+            window.recaptchaToken = "";
+            return null;
+            // throw new Error(`Get result failed: ${resultJson.errorDescription || resultJson.errorCode}`);
+        }
+
+        if (resultJson.status === "ready") {
+            window.recaptchaToken = resultJson.solution.gRecaptchaResponse;
+            return resultJson.solution.gRecaptchaResponse;
+        }
+    }
+    window.recaptchaToken = "";
+    return null;
+}
 
 window.request = (endpoint, method = "GET", body = null) => {
     const headers = {
@@ -116,6 +169,10 @@ window.getToken = () => {
     return localStorage.getItem('Yh71OoPMuBY8T50ocWvJFw');
 }
 
+window.removeToken = () => {
+    return localStorage.removeItem('Yh71OoPMuBY8T50ocWvJFw');
+}
+
 window.sendLoginOTP = async (people) => { // [{"tckn":"xxxxx","passport":"xxxxx"}]
     window.people = people;
     return await request(endPoints.SendLoginOTP, "POST", { "people": window.people });
@@ -166,7 +223,7 @@ window.getClosedDates = async () => {
 window.getHours = async (date, recaptchaToken) => {
     const [nationalityNumber, customerData] = Object.entries(window.customers)[0];
     const applicationType = Object.entries(window.customers).length == 1 ? 1 : 2;
-    const response = await request(`AppointmentLayouts/GetAppointmentHourQoutaInfo?nationalityNumber=${nationalityNumber}&dealerId=${window.dealerId}&date=${date.replace(/-/g, "/")}&appointmentTypeId=${window.appointmentTypeId}&onlyAvailable=true&recaptchaToken=${recaptchaToken}&applicationType=${applicationType}`);
+    const response = await request(`AppointmentLayouts/GetAppointmentHourQoutaInfo?nationalityNumber=${nationalityNumber}&dealerId=${window.dealerId}&date=${date.replace(/-/g, "/")}&appointmentTypeId=${window.appointmentTypeId}&onlyAvailable=true&recaptchaToken=${window.recaptchaToken}&applicationType=${applicationType}`);
     window.dayHours = await window.decryptEncryptedData(response);
     return window.dayHours;
 }
@@ -277,4 +334,3 @@ window.staticRequest = async () => {
     // const maxAppointmentDate = await window.request(window.endPoints.GetMaxAppointmentDate);
     // window.maxAppointmentDate = maxAppointmentDate[0].name;
 }
-
