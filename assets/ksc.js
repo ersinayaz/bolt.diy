@@ -104,38 +104,31 @@ window.request = (callerName, endpoint, method = "GET", body = null) => {
         body: body ? JSON.stringify(body) : null,
         referrer: referrer
     }).then(async response => {
-        if (!response.ok) {
-            
-            console.error(`HTTP error! status: ${response.status}, ${response.statusText}`);
-            window.ReactNativeWebView.postMessage(JSON.stringify({
-                callerName: callerName,
-                error: true,
-                errorMessage: `HTTP error! status: ${response.status}, ${response.statusText}`,
-                data: null
-            }), "*");
-            return null;
+        const responseData = {
+            callerName: callerName,
+            status: response.status,
+            error: response.status !== 200
+        };
+
+        try {
+            responseData.data = await response.json();
+        } catch (error) {
+            responseData.data = await response.text();
         }
 
-        // Content-Type kontrolü yaparak JSON olup olmadığını tespit et
-        const contentType = response.headers.get("content-type");
-        if (contentType && contentType.includes("application/json")) {
-            const resData = await response.json();
-            window.ReactNativeWebView.postMessage(JSON.stringify({
-                callerName: callerName,
-                data: resData
-            }), "*");
-            return resData;
-        } else {
-            // JSON değilse boş string veya null dönebilir
-            window.ReactNativeWebView.postMessage(JSON.stringify({
-                callerName: callerName,
-                data: null
-            }), "*");
-            return null;
-        }
+        window.ReactNativeWebView.postMessage(JSON.stringify(responseData), "*");
+        console.log(responseData);
+        return responseData;
     }).catch(error => {
-        console.error("Request failed:", error);
-        return null;
+        const responseData = {
+            callerName: callerName,
+            status: 0,
+            error: true,
+            errorMessage: error.message
+        };
+        window.ReactNativeWebView.postMessage(JSON.stringify(responseData), "*");
+        console.log(responseData);
+        return responseData;
     });
 };
 
